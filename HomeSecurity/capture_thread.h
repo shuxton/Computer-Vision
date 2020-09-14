@@ -4,8 +4,11 @@
 #include <QString>
 #include <QThread>
 #include <QMutex>
-#include "utilities.h"
 #include "opencv2/opencv.hpp"
+#include "opencv2/videoio.hpp"
+#include "opencv2/video/background_segm.hpp"
+
+using namespace std;
 
 class CaptureThread : public QThread{
 	Q_OBJECT
@@ -22,6 +25,11 @@ class CaptureThread : public QThread{
 		 STOPPED
 		 };
 	 void setVideoSavingStatus(VideoSavingStatus status){video_saving_status=status;};
+	 void setMotionDetectingStatus(bool status){
+		 motion_detecting_status=status;
+		 motion_detected=false;
+		 if(video_saving_status!=STOPPED)video_saving_status=STOPPING;
+		 };
 	 
 	protected:
 	 void run() override;
@@ -32,9 +40,13 @@ class CaptureThread : public QThread{
 	 void videoSaved(QString name);
 	 
 	private:
+	 void motionDetect(cv::Mat &frame);
 	 void calculateFPS(cv::VideoCapture &cap);
 	 void startSavingVideo(cv::Mat &firstFrame);
 	 void stopSavingVideo();
+	 bool motion_detecting_status;
+	 bool motion_detected;
+	 cv::Ptr<cv::BackgroundSubtractorMOG2> segmentor;
 	 bool running;
 	 int cameraID;
 	 QString videoPath;

@@ -1,6 +1,9 @@
-#include "capture_thread.h"
 #include <QTime>
+#include <QtConcurrent>
+#include <QDebug>
 
+#include "utilities.h"
+#include "capture_thread.h"
 
 CaptureThread::CaptureThread(int camera,QMutex *lock):
  running(false),cameraID(camera),videoPath(""),data_lock(lock),fps_calculating(false),fps(0.0)
@@ -9,6 +12,7 @@ CaptureThread::CaptureThread(int camera,QMutex *lock):
 	  video_saving_status=STOPPED;
 	  saved_video_name="";
 	  video_writer=nullptr;
+	  motion_detecting_status=false;
  }
  
  CaptureThread::CaptureThread(QString videoPath,QMutex *lock):
@@ -18,6 +22,7 @@ CaptureThread::CaptureThread(int camera,QMutex *lock):
 	  video_saving_status=STOPPED;
 	  saved_video_name="";
 	  video_writer=nullptr;
+	  motion_detecting_status=false;
  }
  
  CaptureThread::~CaptureThread(){
@@ -29,6 +34,7 @@ CaptureThread::CaptureThread(int camera,QMutex *lock):
 	 cv::Mat tmp_frame;
 	 frame_width=cap.get(cv::CAP_PROP_FRAME_WIDTH);
 	 frame_height=cap.get(cv::CAP_PROP_FRAME_HEIGHT);
+	 segmentor=cv::createBackgroundSubtractorMOG2(500,16,true);
 	 while(running){
 		 if(fps_calculating){
 			 calculateFPS(cap);
@@ -37,6 +43,9 @@ CaptureThread::CaptureThread(int camera,QMutex *lock):
 		 if(tmp_frame.empty()){
 			 break;
 			 }
+			 if(motion_detecting_status){
+					motionDetect(tmp_frame);
+					}
 			 if(video_saving_status==STARTING){
 				 startSavingVideo(tmp_frame);
 				 }
@@ -46,6 +55,7 @@ CaptureThread::CaptureThread(int camera,QMutex *lock):
 			if(video_saving_status==STOPPING){
 				stopSavingVideo();
 				}
+				
 		 cvtColor(tmp_frame,tmp_frame,cv::COLOR_BGR2RGB);
 		 data_lock->lock();
 		 frame=tmp_frame;
@@ -87,4 +97,37 @@ void CaptureThread::stopSavingVideo(){
 	delete video_writer;
 	video_writer=nullptr;
 	emit videoSaved(saved_video_name);
+	}
+
+void CaptureThread::motionDetect(cv::Mat &frame){
+	cv::Mat fgmask;
+	segmentor->apply(frame,fgmask);
+	if(fgmask.empty())return;
+	
+	cv::threshold(fgmask,fgmask,25,255,cv::THRESH_BINARY);
+	
+	int noise_size=9;
+	cv::Mat kernel=cv::getStructuringElement(cv::MORPH_RECT,cv::Size(noise_size,noise_size));
+	cv::erode(fgmask,fgmask,kernel);
+	kernel=cv::getStructuringElement(cv::MORPH_RECT,cv::Size(noise_size,noise_size));
+	cv::dilate(fgmask,fgmask,kernel,cv::Point(-1,-1),3);
+	vector<vector<cv::Point>> contours;
+	cv::findContours(fgmask,contours,cv::RETR_TREE,cv::CHAIN_APPROX_SIMPLE);
+	bool has_motion=contours.size()>0;
+	if(!motion_detected && has_motion){
+		motion_detected=true;
+		setVideoSavingStatus(STARTING);
+		qDebug()<<"new motion detected,sending notification";
+		QtConcurrent::run(Utilities::notifyMobile,cameraID);
+		}
+	else if (motion_detected && !has_motion){
+		motion_detected=false;
+		setVideoSavingStatus(STOPPING);
+		qDebug()<<"detected motion disappeared";
+		}
+	cv::Scalar color=cv::Scalar(0,0,255);
+	for(size_t i=0;i<contours.size();i++){
+		cv::Rect rect=cv::boundingRect(contours[i]);
+		cv::rectangle(frame,rect,color,1);
+		}
 	}

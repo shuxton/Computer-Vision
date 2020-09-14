@@ -42,6 +42,7 @@ private:
  void populateSavedList();    
 
 private slots:
+ void updateMonitorStatus(int status); 
  void showCameraInfo();
  void openCamera();
  void updateFrame(cv::Mat*);
